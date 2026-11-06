@@ -293,9 +293,11 @@ function startSync(db){
     try{S=JSON.parse(d.json);fixNames();localSave();render();if(!READONLY)setSync('ok')}catch(e){}
   },()=>setSync('err'));
 }
+const PK_DEFAULT={group:'grandpa',stake:30,onlySafe:false,min3:90,max3:200,min4:90,max4:200,min5:90,max5:200};
+const SP_DEFAULT={stake:30,onlySafe:false,min2:90,max2:200,min3:90,max3:200};
 function loadUI(){
-  UI={tab:'week',season:'2026-27',week:'w8',slipGroup:'grandpa',pk:{group:'grandpa',stake:30,min:100,max:180,legs:4,onlySafe:false}};
-  try{const t=localStorage.getItem(UIKEY);if(t)UI=Object.assign(UI,JSON.parse(t));UI.pk=Object.assign({group:'grandpa',stake:30,min:100,max:180,legs:4,onlySafe:false},UI.pk)}catch(e){}
+  UI={tab:'week',season:'2026-27',week:'w9',slipGroup:'grandpa',pk:{...PK_DEFAULT},sp:{...SP_DEFAULT}};
+  try{const t=localStorage.getItem(UIKEY);if(t)UI=Object.assign(UI,JSON.parse(t));UI.pk=Object.assign({},PK_DEFAULT,UI.pk);UI.sp=Object.assign({},SP_DEFAULT,UI.sp||{})}catch(e){}
 }
 function saveUI(){try{localStorage.setItem(UIKEY,JSON.stringify(UI))}catch(e){}}
 function commit(){save();render()}
@@ -319,7 +321,26 @@ function pStatus(p){
 const stakeTotal=p=>Object.values(p.stakes).reduce((a,b)=>a+(+b||0),0);
 const pDec=p=>p.legs.reduce((a,l)=>a*dec(l.odds),1);
 const pPayout=p=>(p.payoutOverride!=null&&p.payoutOverride!=='')?+p.payoutOverride:(p.legs.length?stakeTotal(p)*pDec(p):0);
-function pHit(p){return p.legs.reduce((a,l)=>{const f=fairP(l.awayML,l.homeML);return a*(l.pick===l.away?f[0]:f[1])},1)}
+/* legs are moneyline by default; spread legs carry type:'spread' plus the away team's line and both prices */
+const isSp=l=>l.type==='spread';
+const fmtLine=n=>n>0?'+'+n:''+n;
+const sideLine=(l,t)=>t===l.away?l.awayLine:-l.awayLine;
+const spA=g=>g.awaySpOdds||-110, spH=g=>g.homeSpOdds||-110;
+function legProb(l){
+  const f=isSp(l)?fairP(l.awaySpOdds||-110,l.homeSpOdds||-110):fairP(l.awayML,l.homeML);
+  return l.pick===l.away?f[0]:f[1];
+}
+function legDesc(l){return isSp(l)?`${tname(l.pick)} ${fmtLine(sideLine(l,l.pick))} (${fmtML(l.odds)})`:`${tname(l.pick)} ML ${fmtML(l.odds)}`}
+function parlayKind(p){return p.legs.every(isSp)?'spread':p.legs.some(isSp)?'mixed':'moneyline'}
+function pHit(p){return p.legs.reduce((a,l)=>a*legProb(l),1)}
+/* build the spread leg data for a pick on a game (g must have awayLine) */
+function mkSpreadLeg(g,t){
+  return {id:uid(),type:'spread',away:g.away,home:g.home,awayML:g.awayML,homeML:g.homeML,awayLine:g.awayLine,awaySpOdds:spA(g),homeSpOdds:spH(g),
+    pick:t,odds:t===g.away?spA(g):spH(g),winner:null};
+}
+function mkMlLeg(g,t){
+  return {id:uid(),away:g.away,home:g.home,awayML:g.awayML,homeML:g.homeML,pick:t,odds:t===g.away?g.awayML:g.homeML,winner:null};
+}
 function pNet(p){
   const st=pStatus(p),T=stakeTotal(p),pay=pPayout(p),out={};
   for(const [m,s0] of Object.entries(p.stakes)){const s=+s0||0;out[m]=st==='won'&&T>0?pay*s/T-s:st==='lost'?-s:0}
@@ -387,11 +408,13 @@ function groupChips(cur,action){return `<div class="row" style="margin:6px 0">${
 
 /* ============ views ============ */
 function legRow(p,l){
+  const sp=isSp(l);
   const side=t=>{
-    const isPick=l.pick===t,ml=t===l.away?l.awayML:l.homeML;
+    const isPick=l.pick===t;
+    const sub=sp?`${fmtLine(sideLine(l,t))} (${fmtML(isPick?l.odds:(t===l.away?l.awaySpOdds:l.homeSpOdds))})`:fmtML(isPick?l.odds:(t===l.away?l.awayML:l.homeML));
     const c=['team',isPick?'picked':'',l.winner===t?'winner':'',l.winner&&l.winner!==t?'loser':''].join(' ');
-    return `<button class="${c}" data-a="win" data-p="${p.id}" data-l="${l.id}" data-t="${t}">${logo(t)}<b>${tname(t)}</b><span class="ml">${fmtML(isPick?l.odds:ml)}</span></button>`};
-  return `<div class="leg">${side(l.away)}<div class="at">at</div>${side(l.home)}
+    return `<button class="${c}" data-a="win" data-p="${p.id}" data-l="${l.id}" data-t="${t}">${logo(t)}<b>${tname(t)}</b><span class="ml">${sub}</span></button>`};
+  return `${sp?`<div class="small mute" style="margin-top:8px">SPREAD leg. Tap the team that covered.</div>`:''}<div class="leg">${side(l.away)}<div class="at">at</div>${side(l.home)}
     <div class="legtools"><button data-a="flip" data-p="${p.id}" data-l="${l.id}" title="Switch pick">⇄</button><button data-a="rmLeg" data-p="${p.id}" data-l="${l.id}" title="Remove leg">✕</button></div></div>`;
 }
 function parlayCard(p,i,g){
@@ -467,7 +490,10 @@ function gameCard(g,edit){
   const side=(t,ml,p,key)=>`<div style="text-align:center;flex:1">${logo(t)}<div><b>${tname(t)}</b></div>
    ${edit?`<input type="number" step="1" value="${ml}" data-c="ml" data-g="${g.id}" data-side="${key}" style="width:80px;text-align:center">`:`<div class="mute">${fmtML(ml)}</div>`}<div class="small ${fs===key?'pos':'mute'}">${(p*100).toFixed(0)}%</div></div>`;
   return `<div class="card"><div class="row" style="align-items:flex-start;gap:4px">${side(g.away,g.awayML,f[0],'away')}<div class="mute" style="align-self:center">at</div>${side(g.home,g.homeML,f[1],'home')}</div>
-   ${edit?`<div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm danger" data-a="delGame" data-g="${g.id}">Remove</button></div>`:''}</div>`;
+   ${edit?`<div class="row small mute" style="margin-top:8px;gap:6px"><label class="field">${tname(g.away)} spread<input type="number" step="0.5" value="${g.awayLine!=null?g.awayLine:''}" placeholder="-3.5" data-c="sp" data-f="line" data-g="${g.id}" style="width:78px"></label>
+   <label class="field">${tname(g.away)} price<input type="number" step="1" value="${spA(g)}" data-c="sp" data-f="ao" data-g="${g.id}" style="width:78px"></label>
+   <label class="field">${tname(g.home)} price<input type="number" step="1" value="${spH(g)}" data-c="sp" data-f="ho" data-g="${g.id}" style="width:78px"></label></div>
+   <div class="row" style="margin-top:8px;justify-content:flex-end"><button class="btn sm danger" data-a="delGame" data-g="${g.id}">Remove</button></div>`:''}</div>`;
 }
 function viewSlate(){
   const gs=gamesFor().slice().sort((a,b)=>Math.max(...fairP(b.awayML,b.homeML))-Math.max(...fairP(a.awayML,a.homeML)));
@@ -479,11 +505,51 @@ function viewSlate(){
    <label class="field">Away moneyline<input type="number" id="ngAM" placeholder="+150"></label><label class="field">Home moneyline<input type="number" id="ngHM" placeholder="-180"></label></div>
    <div class="row" style="margin-top:10px"><button class="btn primary" data-a="addGame">Add game</button><button class="btn" data-a="copySlateText">Copy slate as text</button></div></div>`;
 }
-/* ---- pick helper ---- */
+/* ---- pick helper (moneyline) and spread helper ---- */
 let COMBOS=[];
+const OPT_LABELS={1:['Only option'],2:['Safest','Boldest'],3:['Safest','Balanced','Boldest']};
+/* every combo of L items whose payout lands in [min,max]; returns the safest, a middle one, and the boldest */
+function buildOptions(items,L,stake,min,max){
+  const n=items.length,out=[];let it=0;
+  (function rec(start,pick,dm,hit,sc){
+    if(it>300000)return;
+    if(pick.length===L){it++;const pay=stake*dm;if(pay>=min&&pay<=max)out.push({items:pick.slice(),pay,hit,score:sc});return}
+    for(let i=start;i<n;i++){if(n-i<L-pick.length)break;const x=items[i];pick.push(x);rec(i+1,pick,dm*dec(x.odds),hit*x.p,sc*x.score);pick.pop()}
+  })(0,[],1,1,1);
+  out.sort((a,b)=>b.score-a.score);
+  let opts=out;
+  if(out.length>3)opts=[out[0],out[Math.floor((out.length-1)/2)],out[out.length-1]];
+  return {opts,total:out.length};
+}
+function otherGroupGames(){
+  const used=new Set();
+  S.groups.filter(x=>x.id!==UI.pk.group).forEach(o=>parlaysAt(o.id).forEach(p=>p.legs.forEach(l=>used.add(gameKey(l)))));
+  return used;
+}
+function optCard(c,label,g,stake){
+  c.stakeUsed=stake;
+  const idx=COMBOS.push(c)-1;
+  return `<div class="combo"><div class="row"><b class="grow">${label}</b><span class="pos"><b>${(c.hit*100).toFixed(1)}%</b> to hit</span></div>
+   ${c.items.map(x=>`<div class="legline">${logo(x.pick,'sm')}<span>${esc(x.text)} <span class="mute">${x.sep} ${tname(x.opp)}</span></span></div>`).join('')}
+   <div class="row" style="margin-top:6px"><span>Pays <b>${money(c.pay)}</b> <span class="mute small">on ${money(stake)} · ${fmtML(toAm(c.pay/stake))}</span></span><span class="grow"></span><button class="btn sm primary" data-a="lockCombo" data-i="${idx}">Lock in for ${esc(g.name)}</button></div></div>`;
+}
+function sizeSection(L,p,items,stake,g,sp){
+  const ns=sp?'sp':'pk',min=+p['min'+L],max=+p['max'+L];
+  const r=buildOptions(items,L,stake,min,max);
+  const labels=OPT_LABELS[r.opts.length]||[];
+  const cards=r.opts.map((c,i)=>optCard(c,labels[i]+' '+L+'-leg',g,stake)).join('');
+  const hint=sp?` At typical -110 prices a ${L}-leg spread parlay pays about ${money(stake*Math.pow(1.909,L))}. Raise the top number to see them.`:' Try a wider payout range or fewer exclusions.';
+  return `<div class="card"><div class="row"><h2 class="grow" style="margin:0">${L}-leg options</h2><span class="small mute">${r.total} fit your range</span></div>
+   <div class="grid2" style="margin:8px 0 4px"><label class="field">Payout from ($)<input type="number" data-u="${ns}.min${L}" value="${min}"></label><label class="field">Payout to ($)<input type="number" data-u="${ns}.max${L}" value="${max}"></label></div>
+   ${cards||`<div class="empty">No ${L}-leg combos pay between ${money(min)} and ${money(max)} with these games.${hint}</div>`}</div>`;
+}
+function realityCheck(stake){
+  if(!COMBOS.length)return '';
+  const avgEV=COMBOS.reduce((a,c)=>a+c.hit*c.pay-c.stakeUsed,0)/COMBOS.length;
+  return `<div class="note small">Reality check: every option carries the sportsbook's margin. On average the options above lose about <b>${money(Math.abs(avgEV))}</b> per ${money(stake)} stake. A bigger payout just means a lower hit chance.</div>`;
+}
 function viewPicks(){
-  const k=UI.pk,g=grp(k.group),other=S.groups.filter(x=>x.id!==k.group);
-  const used=new Set();other.forEach(o=>parlaysAt(o.id).forEach(p=>p.legs.forEach(l=>used.add(gameKey(l)))));
+  const k=UI.pk,g=grp(k.group),used=otherGroupGames();
   const all=gamesFor().map(x=>({...x,fs:favSide(x)}));
   all.forEach(x=>{const f=fairP(x.awayML,x.homeML);x.fp=x.fs==='away'?f[0]:f[1];x.fav=x[x.fs];x.opp=x.fs==='away'?x.home:x.away;x.fml=x.fs==='away'?x.awayML:x.homeML;x.oml=x.fs==='away'?x.homeML:x.awayML});
   all.sort((a,b)=>b.fp-a.fp);
@@ -495,46 +561,66 @@ function viewPicks(){
     ${used.has(gameKey(x))?`<span class="status lost" style="margin-left:6px">in other group</span>`:''}
     <div class="flags">${['safe','risky','skip'].map(f=>`<button class="flag ${f} ${x.flag===f?'on':''}" data-c="flag" data-g="${x.id}" data-f="${f}">${f}</button>`).join('')}</div></div>
     <div class="pct" style="color:hsl(${hue},75%,60%)">${(x.fp*100).toFixed(0)}%</div></div>`}).join('');
-  // combos
-  COMBOS=[];let capped=false;const n=elig.length,L=+k.legs,cap=400000;let it=0;const out=[];
-  (function rec(start,pick,dm,pr){
-    if(it>cap){capped=true;return}
-    if(pick.length===L){it++;const pay=k.stake*dm;if(pay>=k.min&&pay<=k.max)out.push({ids:pick.map(x=>x.id),legs:pick.slice(),pay,hit:pr});return}
-    for(let i=start;i<n;i++){if(n-i<L-pick.length)break;pick.push(elig[i]);rec(i+1,pick,dm*dec(elig[i].fml),pr*elig[i].fp);pick.pop()}
-  })(0,[],1,1);
-  out.sort((a,b)=>b.hit-a.hit);COMBOS=out.slice(0,15);
-  const avgEV=COMBOS.length?COMBOS.reduce((a,c)=>a+c.hit*c.pay-k.stake,0)/COMBOS.length:0;
-  const comboHtml=COMBOS.map((c,i)=>`<div class="combo"><div class="row"><b class="grow">Option ${i+1}</b><span class="pos"><b>${(c.hit*100).toFixed(1)}%</b> to hit</span></div>
-   ${c.legs.map(x=>`<div class="legline">${logo(x.fav,'sm')}<span>${tname(x.fav)} ${fmtML(x.fml)} <span class="mute">${x.fs==='home'?'vs':'at'} ${tname(x.opp)}</span></span></div>`).join('')}
-   <div class="row" style="margin-top:6px"><span>Pays <b>${money(c.pay)}</b> <span class="mute small">on ${money(k.stake)} · ${fmtML(toAm(c.pay/k.stake))}</span></span><span class="grow"></span><button class="btn sm primary" data-a="lockCombo" data-i="${i}">Lock in for ${esc(g.name)}</button></div></div>`).join('');
-  return weekBar()+`<div class="card"><h2>Parlay builder</h2>${groupChips(k.group,'pkGroup')}
-   <div class="grid2">
-   <label class="field">Group stake ($)<input type="number" data-u="pk.stake" value="${k.stake}"></label>
-   <label class="field">Payout from ($)<input type="number" data-u="pk.min" value="${k.min}"></label>
-   <label class="field">Payout to ($)<input type="number" data-u="pk.max" value="${k.max}"></label>
-   <label class="field">Legs<select data-u="pk.legs">${[2,3,4,5,6,7].map(n=>`<option ${n==k.legs?'selected':''}>${n}</option>`).join('')}</select></label></div>
+  const items=elig.map(x=>({pick:x.fav,opp:x.opp,sep:x.fs==='home'?'vs':'at',odds:x.fml,p:x.fp,score:x.fp,text:`${tname(x.fav)} ${fmtML(x.fml)}`,mkLeg:()=>mkMlLeg(x,x.fav)}));
+  COMBOS=[];
+  const secs=[3,4,5].map(L=>sizeSection(L,k,items,+k.stake,g,false)).join('');
+  return weekBar()+`<div class="card"><h2>Moneyline parlays</h2>${groupChips(k.group,'pkGroup')}
+   <div class="grid2"><label class="field">Group stake ($)<input type="number" data-u="pk.stake" value="${k.stake}"></label></div>
    <label class="row small" style="margin-top:10px"><input type="checkbox" data-u="pk.onlySafe" ${k.onlySafe?'checked':''}> Only use games I marked "safe"</label>
-   <div class="small mute" style="margin-top:6px">Games marked risky or skip, and games the other group already has, are left out. ${elig.length} games in play.</div></div>
+   <div class="small mute" style="margin-top:6px">Each size shows the safest option, a balanced one in the middle, and the boldest. Games marked risky or skip, and games the other group already has, are left out. ${elig.length} games in play.</div></div>
    <div class="card"><h2>Heat map</h2><div class="small mute" style="margin-bottom:6px">Win chance with the book's margin removed. Green is safest.</div>${heat||'<div class="empty">Add this week\'s games on the Schedule tab.</div>'}</div>
-   <div class="card"><h2>${L}-leg options</h2>${comboHtml||`<div class="empty">No ${L}-leg combos pay between ${money(k.min)} and ${money(k.max)} with these games. Try a wider payout range or fewer exclusions.</div>`}
-   ${capped?'<div class="small mute">Very many combinations, showing a partial search.</div>':''}
-   ${COMBOS.length?`<div class="note small" style="margin-top:10px">Reality check: every option carries the sportsbook's margin. On average these options lose about <b>${money(Math.abs(avgEV))}</b> per ${money(k.stake)} stake. A bigger payout just means a lower hit chance.</div>`:''}</div>`;
+   ${secs}${realityCheck(+k.stake)}`;
+}
+/* ---- spread helper ---- */
+function viewSpreads(){
+  const k=UI.sp,g=grp(UI.pk.group),used=otherGroupGames();
+  const games=gamesFor();
+  const all=games.filter(x=>x.awayLine!=null).map(x=>{
+    const awayFav=x.awayLine<0||(x.awayLine===0&&favSide(x)==='away');
+    const favT=awayFav?x.away:x.home,dogT=awayFav?x.home:x.away;
+    const side=x.spSide==='dog'?dogT:favT,opp=side===x.away?x.home:x.away;
+    const f=fairP(x.awayML,x.homeML),strength=side===x.away?f[0]:f[1];
+    const fs=fairP(spA(x),spH(x)),cover=side===x.away?fs[0]:fs[1];
+    const line=side===x.away?x.awayLine:-x.awayLine,odds=side===x.away?spA(x):spH(x);
+    return {...x,favT,dogT,side,opp,strength,cover,line,odds,sep:side===x.home?'vs':'at'};
+  }).sort((a,b)=>b.strength-a.strength);
+  const missing=games.length-all.length;
+  const elig=all.filter(x=>x.spFlag!=='risky'&&x.spFlag!=='skip'&&!used.has(gameKey(x))&&(!k.onlySafe||x.spFlag==='safe'));
+  const heat=all.map(x=>{
+    const hue=Math.max(0,Math.min(120,(x.strength-.5)/.4*120));
+    const chip=(on,txt,s)=>`<button class="flag ${on?'on safe':''}" data-c="spSide" data-g="${x.id}" data-s="${s}">${txt}</button>`;
+    return `<div class="game"><div class="bar" style="background:hsl(${hue},70%,45%)"></div>${logo(x.side,'sm')}
+    <div><b>${tname(x.side)} ${fmtLine(x.line)}</b> <span class="mute">(${fmtML(x.odds)}) ${x.sep} ${tname(x.opp)} ${fmtLine(-x.line)}</span>
+    ${used.has(gameKey(x))?`<span class="status lost" style="margin-left:6px">in other group</span>`:''}
+    <div class="flags">${chip(x.spSide!=='dog','Take '+tname(x.favT),'fav')}${chip(x.spSide==='dog','Take '+tname(x.dogT),'dog')}</div>
+    <div class="flags">${['safe','risky','skip'].map(f=>`<button class="flag ${f} ${x.spFlag===f?'on':''}" data-c="flag" data-k="spFlag" data-g="${x.id}" data-f="${f}">${f}</button>`).join('')}</div></div>
+    <div class="pct" style="color:hsl(${hue},75%,60%)">${(x.strength*100).toFixed(0)}%</div></div>`}).join('');
+  const items=elig.map(x=>({pick:x.side,opp:x.opp,sep:x.sep,odds:x.odds,p:x.cover,score:x.strength,text:`${tname(x.side)} ${fmtLine(x.line)} (${fmtML(x.odds)})`,mkLeg:()=>mkSpreadLeg(x,x.side)}));
+  COMBOS=[];
+  const secs=[2,3].map(L=>sizeSection(L,k,items,+k.stake,g,true)).join('');
+  return weekBar()+`<div class="card"><h2>Spread parlays</h2>${groupChips(UI.pk.group,'pkGroup')}
+   <div class="grid2"><label class="field">Group stake ($)<input type="number" data-u="sp.stake" value="${k.stake}"></label></div>
+   <label class="row small" style="margin-top:10px"><input type="checkbox" data-u="sp.onlySafe" ${k.onlySafe?'checked':''}> Only use games I marked "safe"</label>
+   <div class="small mute" style="margin-top:6px">Each game starts on the team giving points. Tap the other team's button to take the underdog instead. Results are entered by tapping the team that covered. ${elig.length} games in play.</div></div>
+   ${missing?`<div class="warn">${missing} game${missing>1?'s have':' has'} no spread line yet. Add the line on the Schedule tab.</div>`:''}
+   <div class="card"><h2>Spread board</h2><div class="small mute" style="margin-bottom:6px">The percent is each team's chance to win the game outright, used to rank how safe a side looks. Covering a spread is close to a coin flip for every game.</div>${heat||'<div class="empty">No spread lines for this week yet. Add them on the Schedule tab.</div>'}</div>
+   ${secs}${realityCheck(+k.stake)}`;
 }
 function slipText(g,ps){
-  return `${g.name} · ${WK[UI.week].l} ${UI.season}\n`+ps.map((p,i)=>`\nParlay ${i+1}\n`+p.legs.map(l=>`  ${tname(l.pick)} ML ${fmtML(l.odds)} (${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)})`).join('\n')+`\n  Wager ${money(stakeTotal(p))} · ${fmtML(toAm(pDec(p)))} · To collect ${money(pPayout(p))}`).join('\n');
+  return `${g.name} · ${WK[UI.week].l} ${UI.season}\n`+ps.map((p,i)=>`\nParlay ${i+1}\n`+p.legs.map(l=>`  ${legDesc(l)} (${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)})`).join('\n')+`\n  Wager ${money(stakeTotal(p))} · ${fmtML(toAm(pDec(p)))} · To collect ${money(pPayout(p))}`).join('\n');
 }
 function viewSlip(){
   const g=grp(UI.slipGroup),ps=parlaysAt(g.id).filter(p=>p.legs.length);
-  const slips=ps.map((p,i)=>`<div class="slip"><h2>${esc(g.name)} · Parlay ${i+1}</h2><div class="small" style="color:#555;margin:-4px 0 6px">${WK[UI.week].l} · ${UI.season} · ${p.legs.length}-team moneyline parlay</div>
-   ${p.legs.map(l=>`<div class="sl"><span>${tname(l.pick).toUpperCase()}<small>${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)}</small></span><span>${fmtML(l.odds)}</span></div>`).join('')}
+  const slips=ps.map((p,i)=>`<div class="slip"><h2>${esc(g.name)} · Parlay ${i+1}</h2><div class="small" style="color:#555;margin:-4px 0 6px">${WK[UI.week].l} · ${UI.season} · ${p.legs.length}-team ${parlayKind(p)} parlay</div>
+   ${p.legs.map(l=>`<div class="sl"><span>${tname(l.pick).toUpperCase()}<small>${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)}${isSp(l)?' · spread':''}</small></span><span>${isSp(l)?fmtLine(sideLine(l,l.pick))+' ('+fmtML(l.odds)+')':fmtML(l.odds)}</span></div>`).join('')}
    <div class="tot"><span>Wager</span><span>${money(stakeTotal(p))}</span></div><div class="tot"><span>Parlay odds</span><span>${fmtML(toAm(pDec(p)))}</span></div>
    <div class="tot big"><span>To collect</span><span>${money(pPayout(p))}</span></div>
    <div class="small" style="color:#555;margin-top:8px">In: ${g.members.filter(m=>+p.stakes[m]>0).map(m=>who(m)+' '+money(+p.stakes[m])).join(' · ')}</div></div>`).join('');
   return weekBar()+groupChips(UI.slipGroup,'slipGroup')+`<div class="card">${slipPhotos(g.id)}</div>`+(slips||`<div class="card empty">No picks locked in for this group yet.<br><br><button class="btn primary" data-a="tab" data-t="picks" data-g="${g.id}">Go to the pick helper</button></div>`)+
    (ps.length?`<div class="row"><button class="btn primary" data-a="copySlip">Copy as text</button></div>`:'');
 }
-const VIEWS={week:viewWeek,'h-grandpa':()=>viewHistory('grandpa'),'h-uncle':()=>viewHistory('uncle'),slate:viewSlate,picks:viewPicks,slip:viewSlip};
-const TABS=[['week','Week'],['h-grandpa',"Grandpa's group"],['h-uncle',"N'Namdi's group"],['slate','Schedule'],['picks','Pick helper'],['slip','Bet slip']];
+const VIEWS={week:viewWeek,'h-grandpa':()=>viewHistory('grandpa'),'h-uncle':()=>viewHistory('uncle'),slate:viewSlate,picks:viewPicks,spreads:viewSpreads,slip:viewSlip};
+const TABS=[['week','Week'],['h-grandpa',"Grandpa's group"],['h-uncle',"N'Namdi's group"],['slate','Schedule'],['picks','Pick helper'],['spreads','Spreads'],['slip','Bet slip']];
 function render(){
   $('#tabs').innerHTML=TABS.map(([k,l])=>`<button class="tab ${UI.tab===k?'on':''}" data-a="tab" data-t="${k}">${l}</button>`).join('');
   watchSlips();
@@ -594,14 +680,16 @@ const A={
   setManual(d){const p=findP(d.p),before=pStatus(p);p.manual=d.v||null;const after=pStatus(p);commit();if(before!==after&&after!=='pending')celebrate(p,after)},
   openAddLeg(d){openAddLeg(d)},
   addLeg(d){const p=findP(d.p),g=gamesFor(p.season,p.week).find(x=>x.id===d.g);if(!g)return;
-    p.legs.push({id:uid(),away:g.away,home:g.home,awayML:g.awayML,homeML:g.homeML,pick:d.t,odds:d.t===g.away?g.awayML:g.homeML,winner:null});
-    p.manual=null;commit();openAddLeg({p:p.id})},
+    p.legs.push(d.m==='sp'&&g.awayLine!=null?mkSpreadLeg(g,d.t):mkMlLeg(g,d.t));
+    p.manual=null;commit();openAddLeg({p:p.id,m:d.m})},
   rmLeg(d){const p=findP(d.p);p.legs=p.legs.filter(l=>l.id!==d.l);commit()},
-  flip(d){const l=findP(d.p).legs.find(x=>x.id===d.l);l.pick=l.pick===l.away?l.home:l.away;l.odds=l.pick===l.away?l.awayML:l.homeML;commit()},
+  flip(d){const l=findP(d.p).legs.find(x=>x.id===d.l);l.pick=l.pick===l.away?l.home:l.away;
+    l.odds=isSp(l)?(l.pick===l.away?l.awaySpOdds:l.homeSpOdds):(l.pick===l.away?l.awayML:l.homeML);commit()},
   win(d){
     const p=findP(d.p),l=p.legs.find(x=>x.id===d.l),val=l.winner===d.t?null:d.t;
     const before=new Map(S.parlays.map(q=>[q.id,pStatus(q)]));
-    S.parlays.forEach(q=>{if(q.season===p.season&&q.week===p.week)q.legs.forEach(x=>{if(x.away===l.away&&x.home===l.home)x.winner=val})});
+    /* the same game in another parlay is settled together, but a spread leg and a moneyline leg are different bets */
+    S.parlays.forEach(q=>{if(q.season===p.season&&q.week===p.week)q.legs.forEach(x=>{if(x.away===l.away&&x.home===l.home&&isSp(x)===isSp(l))x.winner=val})});
     const changed=S.parlays.filter(q=>before.get(q.id)!==pStatus(q)&&pStatus(q)!=='pending');
     commit();
     const first=changed.find(q=>q.id===p.id)||changed[0];
@@ -615,8 +703,8 @@ const A={
   delGame(d){S.games[gkey()]=gamesFor().filter(g=>g.id!==d.g);commit()},
   lockCombo(d){
     const c=COMBOS[+d.i],g=grp(UI.pk.group);if(!c)return;
-    const each=r2(UI.pk.stake/g.members.length),stakes={};g.members.forEach(m=>stakes[m]=each);
-    const legs=c.legs.map(x=>({id:uid(),away:x.away,home:x.home,awayML:x.awayML,homeML:x.homeML,pick:x.fav,odds:x.fml,winner:null}));
+    const each=r2((c.stakeUsed||UI.pk.stake)/g.members.length),stakes={};g.members.forEach(m=>stakes[m]=each);
+    const legs=c.items.map(x=>x.mkLeg());
     S.parlays.push({id:uid(),season:UI.season,week:UI.week,group:g.id,stakes,legs,manual:null,payoutOverride:null});
     UI.tab='slip';UI.slipGroup=g.id;saveUI();commit();window.scrollTo(0,0);toast('Locked in. Here is your slip.');
   },
@@ -638,13 +726,18 @@ function copy(t){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.r
   showModal(`<h2>Copy this</h2><textarea id="ct" readonly>${esc(t)}</textarea><button class="btn" style="width:100%;margin-top:10px" data-a="close">Done</button>`);
   const x=$('#ct');if(x){x.focus();x.select()}})}
 function openAddLeg(d){
-  const p=findP(d.p);if(!p)return;const gs=gamesFor(p.season,p.week),inP=new Set(p.legs.map(gameKey));
+  const p=findP(d.p);if(!p)return;const m=d.m==='sp'?'sp':'ml';
+  const inP=new Set(p.legs.map(gameKey));
+  const gs=gamesFor(p.season,p.week).filter(g=>m==='ml'||g.awayLine!=null);
   const other=S.groups.filter(g=>g.id!==p.group);const used=new Set();other.forEach(o=>parlaysAt(o.id,p.season,p.week).forEach(q=>q.legs.forEach(l=>used.add(gameKey(l)))));
   const list=gs.slice().sort((a,b)=>Math.max(...fairP(b.awayML,b.homeML))-Math.max(...fairP(a.awayML,a.homeML)));
-  showModal(`<h2>Add a leg</h2><div class="mute small" style="margin-bottom:8px">Tap the team to pick. Safest games first.</div>
+  const tab=(k,t)=>`<button class="chip ${m===k?'on':''}" data-a="openAddLeg" data-p="${p.id}" data-m="${k}">${t}</button>`;
+  showModal(`<h2>Add a leg</h2><div class="row" style="margin-bottom:6px">${tab('ml','Moneyline')}${tab('sp','Spread')}</div>
+  <div class="mute small" style="margin-bottom:8px">${m==='sp'?'Tap the team to take against the spread.':'Tap the team to pick. Safest games first.'}</div>
   ${list.map(g=>{const dis=inP.has(gameKey(g)),f=fairP(g.awayML,g.homeML);
-    const b=(t,ml,pp)=>`<button class="team" ${dis?'disabled':''} data-a="addLeg" data-p="${p.id}" data-g="${g.id}" data-t="${t}" style="flex:1">${logo(t)}<b>${tname(t)}</b><span class="ml">${fmtML(ml)} · ${(pp*100).toFixed(0)}%</span></button>`;
-    return `<div class="row" style="margin:8px 0;opacity:${dis?.4:1}">${b(g.away,g.awayML,f[0])}<span class="at">at</span>${b(g.home,g.homeML,f[1])}</div>${used.has(gameKey(g))?`<div class="small neg" style="margin:-4px 0 4px">Other group already has this game</div>`:''}`}).join('')||'<div class="empty">No games yet for this week. Add them on the Schedule tab.</div>'}
+    const b=(t,pp)=>{const away=t===g.away;const sub=m==='sp'?`${fmtLine(away?g.awayLine:-g.awayLine)} (${fmtML(away?spA(g):spH(g))})`:`${fmtML(away?g.awayML:g.homeML)} · ${(pp*100).toFixed(0)}%`;
+      return `<button class="team" ${dis?'disabled':''} data-a="addLeg" data-p="${p.id}" data-g="${g.id}" data-t="${t}" data-m="${m}" style="flex:1">${logo(t)}<b>${tname(t)}</b><span class="ml">${sub}</span></button>`};
+    return `<div class="row" style="margin:8px 0;opacity:${dis?.4:1}">${b(g.away,f[0])}<span class="at">at</span>${b(g.home,f[1])}</div>${used.has(gameKey(g))?`<div class="small neg" style="margin:-4px 0 4px">Other group already has this game</div>`:''}`}).join('')||`<div class="empty">${m==='sp'?'No spread lines for this week yet. Add them on the Schedule tab.':'No games yet for this week. Add them on the Schedule tab.'}</div>`}
   <button class="btn" style="width:100%;margin-top:10px" data-a="close">Done</button>`);
 }
 function settings(){
@@ -682,17 +775,18 @@ document.addEventListener('change',e=>{
       if(c==='stake'){const p=findP(d.p);p.stakes[d.m]=Math.max(0,+d.value||0);commit()}
       else if(c==='payout'){const p=findP(d.p);p.payoutOverride=d.value===''?null:+d.value;commit()}
       else if(c==='ml'){const g=gamesFor().find(x=>x.id===d.g);const v=parseInt(d.value);if(!isNaN(v)&&v){g[d.side==='away'?'awayML':'homeML']=v}commit()}
+      else if(c==='sp'){const g=gamesFor().find(x=>x.id===d.g);const v=parseFloat(d.value);if(d.f==='line'){if(isNaN(v))delete g.awayLine;else g.awayLine=v}else if(!isNaN(v)&&v){g[d.f==='ao'?'awaySpOdds':'homeSpOdds']=v}commit()}
       else if(c==='slipFile'){const f=el.files&&el.files[0];if(f)uploadSlip(f,d.g).catch(()=>toast('Could not upload that photo'));el.value=''}
-      else if(c==='flag'){const g=gamesFor().find(x=>x.id===d.g);g.flag=g.flag===d.f?null:d.f;commit()}
+      else if(c==='flag'){const g=gamesFor().find(x=>x.id===d.g);const key=d.k||'flag';g[key]=g[key]===d.f?null:d.f;commit()}
     };
     guard(apply);
   }
 });
 /* flags are buttons, route their clicks through the same handler */
 document.addEventListener('click',e=>{
-  const el=e.target.closest('button[data-c="flag"]');if(!el)return;
+  const el=e.target.closest('button[data-c="flag"],button[data-c="spSide"]');if(!el)return;
   const d=Object.assign({},el.dataset);
-  guard(()=>{const g=gamesFor().find(x=>x.id===d.g);g.flag=g.flag===d.f?null:d.f;commit()});
+  guard(()=>{const g=gamesFor().find(x=>x.id===d.g);if(d.c==='spSide'){g.spSide=d.s}else{const key=d.k||'flag';g[key]=g[key]===d.f?null:d.f}commit()});
 });
 
 {const f=$('#flag12'),h=$('#hawk');if(window.FLAG12)f.src=FLAG12;else f.remove();if(window.HAWK_LOGO)h.src=HAWK_LOGO;else h.remove()}
