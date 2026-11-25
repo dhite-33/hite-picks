@@ -39,6 +39,7 @@ header,main{position:relative;z-index:1}
 .propleg.won{border-color:var(--green);background:#17401f}.propleg.lost{border-color:var(--red);background:#41131b}
 .prop{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}.prop:last-child{border:0}.prop>.grow{flex:1 1 100%}
 .pbtn{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-weight:700;font-size:14px;white-space:nowrap}
+.rungs{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .pbtn.on{background:var(--green);color:var(--bg);border-color:var(--green)}
 .flag12{flex:0 0 auto;height:36px;width:auto;border-radius:3px;box-shadow:0 2px 8px #0008;align-self:flex-start}
 .hawk{flex:0 0 auto;height:44px;width:auto;filter:drop-shadow(0 2px 6px #0007)}
@@ -300,7 +301,7 @@ function startSync(db){
   },()=>setSync('err'));
 }
 const PK_DEFAULT={group:'grandpa',stake:30,onlySafe:false,min3:90,max3:200,min4:90,max4:200,min5:90,max5:200};
-const PF_DEFAULT={game:'',team:'',player:'',market:'recyds'};
+const PF_DEFAULT={game:'',team:'',player:'',market:'recyds',plus:false};
 const SP_DEFAULT={stake:30,onlySafe:false,min2:90,max2:200,min3:90,max3:200};
 function loadUI(){
   UI={tab:'week',season:'2026-27',week:'w12',slipGroup:'grandpa',pk:{...PK_DEFAULT},sp:{...SP_DEFAULT},pf:{...PF_DEFAULT}};
@@ -345,7 +346,7 @@ function legDesc(l){
 /* pieces for the casino slip: a title, a smaller line under it, and the price shown on the right */
 const legTitle=l=>isProp(l)?l.player.toUpperCase():tname(l.pick).toUpperCase();
 const legWhere=l=>isProp(l)?`${tname(l.team)} · ${tname(l.away)} at ${tname(l.home)}`:(l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home));
-const legSub=l=>isProp(l)?(l.side==='yes'?'Anytime TD':`${l.side==='over'?'Over':'Under'} ${l.line} ${(MK[l.market]||{l:l.market}).l}`)+' · '+legWhere(l):legWhere(l)+(isSp(l)?' · spread':'');
+const legSub=l=>isProp(l)?propLabel(l,l.side)+' · '+legWhere(l):legWhere(l)+(isSp(l)?' · spread':'');
 const legPrice=l=>isProp(l)?fmtML(l.odds):isSp(l)?fmtLine(sideLine(l,l.pick))+' ('+fmtML(l.odds)+')':fmtML(l.odds);
 function parlayKind(p){
   if(p.legs.every(isProp))return 'prop';
@@ -362,7 +363,7 @@ function mkMlLeg(g,t){
   return {id:uid(),away:g.away,home:g.home,awayML:g.awayML,homeML:g.homeML,pick:t,odds:t===g.away?g.awayML:g.homeML,winner:null};
 }
 /* ---- player props (Thanksgiving tab). A prop leg's pick is always 'hit'; you grade it Hit or Missed. ---- */
-const PROP_MARKETS=[{k:'atd',l:'Anytime TD',yes:true},{k:'recyds',l:'Receiving yds'},{k:'rec',l:'Receptions'},{k:'ryds',l:'Rushing yds'},{k:'rr',l:'Rush + Rec yds'},{k:'pyds',l:'Passing yds'},{k:'ptd',l:'Pass TDs'},{k:'cmp',l:'Completions'}];
+const PROP_MARKETS=[{k:'atd',l:'Anytime TD',yes:true},{k:'ftd',l:'First TD scorer',yes:true},{k:'td2',l:'2+ TDs',yes:true},{k:'recyds',l:'Receiving yds'},{k:'rec',l:'Receptions'},{k:'ryds',l:'Rushing yds'},{k:'rr',l:'Rush + Rec yds'},{k:'pyds',l:'Passing yds'},{k:'ptd',l:'Pass TDs'},{k:'cmp',l:'Completions'}];
 const MK=Object.fromEntries(PROP_MARKETS.map(m=>[m.k,m]));
 const isProp=l=>l.type==='prop';
 const legKind=l=>l.type||'ml';
@@ -375,12 +376,16 @@ function propProb(pr,side){
   if(side==='yes'||!pr.underOdds||!pr.overOdds)return imp(propPrice(pr,side));
   const f=fairP(pr.overOdds,pr.underOdds);return side==='over'?f[0]:f[1];
 }
-function propText(pr,side){
+/* "280+ Passing yds", "Over 62.5 Rec yds", "Anytime TD" ... works for a prop or for a locked prop leg */
+function propLabel(pr,side){
   const m=MK[pr.market]||{l:pr.market};
-  return side==='yes'?`${pr.player} Anytime TD`:`${pr.player} ${side==='over'?'Over':'Under'} ${pr.line} ${m.l}`;
+  if(m.yes)return m.l;
+  if(pr.plus)return `${pr.line}+ ${m.l}`;
+  return `${side==='under'?'Under':'Over'} ${pr.line} ${m.l}`;
 }
+function propText(pr,side){return `${pr.player} ${propLabel(pr,side)}`}
 function mkPropLeg(pr,side){
-  return {id:uid(),type:'prop',away:pr.away,home:pr.home,team:pr.team,player:pr.player,market:pr.market,side,line:pr.line,
+  return {id:uid(),type:'prop',away:pr.away,home:pr.home,team:pr.team,player:pr.player,market:pr.market,plus:!!pr.plus,side,line:pr.line,
     odds:propPrice(pr,side),p:propProb(pr,side),pick:'hit',winner:null};
 }
 function pNet(p){
@@ -453,7 +458,7 @@ function legRow(p,l){
   if(isProp(l)){
     const st=legStatus(l),btn=(t,txt,cl)=>`<button class="btn sm ${l.winner===t?cl:''}" data-a="win" data-p="${p.id}" data-l="${l.id}" data-t="${t}">${txt}</button>`;
     return `<div class="propleg ${st}"><div class="grow"><b>${esc(l.player)}</b> <span class="status ${st}" style="margin-left:4px">${st==='pending'?'open':st==='won'?'hit':'missed'}</span>
-      <div>${l.side==='yes'?'Anytime TD':`${l.side==='over'?'Over':'Under'} ${l.line} ${(MK[l.market]||{l:l.market}).l}`} <span class="mute">(${fmtML(l.odds)})</span></div>
+      <div>${propLabel(l,l.side)} <span class="mute">(${fmtML(l.odds)})</span></div>
       <div class="small mute">${esc(legWhere(l))}</div></div>
       <div class="row" style="gap:6px;flex-wrap:nowrap">${btn('hit','Hit','primary')}${btn('miss','Missed','danger')}<button class="btn sm" data-a="rmLeg" data-p="${p.id}" data-l="${l.id}" title="Remove leg">✕</button></div></div>`;
   }
@@ -678,7 +683,7 @@ function viewTg(){
   const hit=legs.reduce((a,x)=>a*propProb(x.pr,x.side),1);
   const ticket=`<div class="card"><h2>Our ticket</h2>
    <div class="small mute">One shared parlay for you and your dad. It goes in Grandpa's group, and Grandpa's balance doesn't change.</div>
-   ${legs.length?legs.map(x=>`<div class="legline" style="justify-content:space-between;margin:8px 0"><span><b>${esc(x.pr.player)}</b><br><span class="mute small">${x.side==='yes'?'Anytime TD':`${x.side==='over'?'Over':'Under'} ${x.pr.line} ${(MK[x.pr.market]||{l:x.pr.market}).l}`} · ${tname(x.pr.team)}</span></span>
+   ${legs.length?legs.map(x=>`<div class="legline" style="justify-content:space-between;margin:8px 0"><span><b>${esc(x.pr.player)}</b><br><span class="mute small">${propLabel(x.pr,x.side)} · ${tname(x.pr.team)}</span></span>
      <span style="white-space:nowrap">${fmtML(propPrice(x.pr,x.side))} <button class="btn sm" data-a="tkRm" data-p="${x.pr.id}">✕</button></span></div>`).join(''):`<div class="empty">Tap Over, Under or Yes on a prop below to add it.</div>`}
    <div class="stakes"><label class="stake">Brian $<input type="number" inputmode="decimal" min="0" step="0.5" value="${st.brian}" data-c="tgstake" data-m="brian"></label>
    <label class="stake">Dylan $<input type="number" inputmode="decimal" min="0" step="0.5" value="${st.dylan}" data-c="tgstake" data-m="dylan"></label></div>
@@ -687,11 +692,19 @@ function viewTg(){
    <div class="row" style="margin-top:8px"><button class="btn primary" data-a="tkLock">Lock ticket</button><button class="btn" data-a="tkClear">Clear</button></div>`:''}</div>`;
   const board=gs.map(g=>{
     const list=props.filter(pr=>pr.away===g.away&&pr.home===g.home).sort((a,b)=>(a.team===b.team?0:a.team===g.away?-1:1)||a.player.localeCompare(b.player)||a.market.localeCompare(b.market)||(a.line||0)-(b.line||0));
-    const rows=list.map(pr=>{
-      const sel=tk.find(t=>t.pid===pr.id);
-      const b=(side,txt)=>`<button class="pbtn ${sel&&sel.side===side?'on':''}" data-a="tkAdd" data-p="${pr.id}" data-s="${side}">${txt} ${fmtML(propPrice(pr,side))}</button>`;
-      return `<div class="prop"><div class="grow"><b>${esc(pr.player)}</b> <span class="mute small">${tname(pr.team)}</span><div>${pr.market==='atd'?'Anytime TD':`${pr.line} ${(MK[pr.market]||{l:pr.market}).l}`}</div></div>
-       <div class="row" style="gap:6px;flex-wrap:nowrap">${pr.market==='atd'?b('yes','Yes'):b('over','Over')+(pr.underOdds?b('under','Under'):'')}<button class="btn sm" data-a="delProp" data-p="${pr.id}" title="Remove prop">✕</button></div></div>`}).join('');
+    /* one row per player and market, with a button for each rung or side, like the casino board */
+    const groups=new Map();
+    list.forEach(pr=>{const m=MK[pr.market]||{};const k=pr.team+'|'+pr.player+'|'+(m.yes?'td':pr.market+(pr.plus?'+':'|'+pr.line));if(!groups.has(k))groups.set(k,[]);groups.get(k).push(pr)});
+    const tdOrder={ftd:0,atd:1,td2:2},tdName={ftd:'First',atd:'Anytime',td2:'2+ TDs'};
+    const rows=[...groups.values()].map(gp=>{
+      const f=gp[0],m=MK[f.market]||{l:f.market};
+      const btn=(pr,side,txt)=>{const sel=tk.find(t=>t.pid===pr.id);return `<button class="pbtn ${sel&&sel.side===side?'on':''}" data-a="tkAdd" data-p="${pr.id}" data-s="${side}">${txt} ${fmtML(propPrice(pr,side))}</button>`};
+      let title,btns;
+      if(m.yes){title='Touchdown scorer';btns=gp.slice().sort((a,b)=>tdOrder[a.market]-tdOrder[b.market]).map(pr=>btn(pr,'yes',tdName[pr.market])).join('')}
+      else if(f.plus){title=m.l;btns=gp.slice().sort((a,b)=>a.line-b.line).map(pr=>btn(pr,'over',pr.line+'+')).join('')}
+      else{title=`${f.line} ${m.l}`;btns=btn(f,'over','Over')+(f.underOdds?btn(f,'under','Under'):'')}
+      return `<div class="prop"><div class="grow"><b>${esc(f.player)}</b> <span class="mute small">${tname(f.team)}</span><div>${title}</div></div>
+       <div class="rungs">${btns}<button class="btn sm" data-a="delProps" data-ids="${gp.map(p=>p.id).join(',')}" title="Remove these props">✕</button></div></div>`}).join('');
     return `<div class="card"><h2>${tname(g.away)} at ${tname(g.home)}</h2><div class="small mute" style="margin-bottom:4px">${esc(g.when||'')}${g.awayLine!=null?` · ${tname(g.away)} ${fmtLine(g.awayLine)}`:''}</div>
      ${rows||`<div class="empty">No props entered for this game yet.</div>`}</div>`}).join('');
   const gOpts=gs.map(g=>`<option value="${gameKey(g)}" ${g0&&gameKey(g)===gameKey(g0)?'selected':''}>${tname(g.away)} at ${tname(g.home)}</option>`).join('');
@@ -703,10 +716,10 @@ function viewTg(){
     <label class="field">Player<select data-u="pf.player">${rosterOpts(pf.team,pf.player)}</select></label>
     <label class="field">Or type a name<input type="text" id="pfName" placeholder="Player not listed" autocomplete="off"></label>
     <label class="field">Prop<select data-u="pf.market">${PROP_MARKETS.map(m=>`<option value="${m.k}" ${m.k===pf.market?'selected':''}>${m.l}</option>`).join('')}</select></label>
-    ${mk.yes?'':`<label class="field">Line<input type="number" step="0.5" id="pfLine" placeholder="62.5"></label>`}
-    <label class="field">${mk.yes?'Yes price':'Over price'}<input type="number" step="1" id="pfOver" placeholder="${mk.yes?'+120':'-115'}"></label>
-    ${mk.yes?'':`<label class="field">Under price<input type="number" step="1" id="pfUnder" placeholder="-115"></label>`}
-   </div><div class="row" style="margin-top:10px"><button class="btn primary" data-a="addProp">Add prop</button></div></div>`:`<div class="card empty">No games loaded for this week yet.</div>`;
+    ${mk.yes?'':`<label class="field">Line<input type="number" step="0.5" id="pfLine" placeholder="${pf.plus?'280':'62.5'}"></label>`}
+    <label class="field">${mk.yes?'Yes price':pf.plus?'Price':'Over price'}<input type="number" step="1" id="pfOver" placeholder="${mk.yes?'+120':'-115'}"></label>
+    ${mk.yes||pf.plus?'':`<label class="field">Under price<input type="number" step="1" id="pfUnder" placeholder="-115"></label>`}
+   </div>${mk.yes?'':`<label class="row small" style="margin-top:10px"><input type="checkbox" data-u="pf.plus" ${pf.plus?'checked':''}> The board shows "X+" buttons (280+, 290+ ...), so there is no Under</label>`}<div class="row" style="margin-top:10px"><button class="btn primary" data-a="addProp">Add prop</button></div></div>`:`<div class="card empty">No games loaded for this week yet.</div>`;
   return weekBar()+`<div class="note small">Thanksgiving picks for you and your dad. Lines come from the Caesars board at Muckleshoot, so you enter them here, then tap to build the ticket. Anyone with the page open sees the same ticket.</div>${ticket}${board}${form}`;
 }
 function slipText(g,ps){
@@ -812,12 +825,17 @@ const A={
     if(!name)return toast('Pick a player or type a name');
     if(!mk.yes&&isNaN(line))return toast('Enter the line, like 62.5');
     if(isNaN(over)||!over)return toast(mk.yes?'Enter the Yes price':'Enter the Over price');
-    (S.props[gkey()]=S.props[gkey()]||[]).push({id:uid(),away:g.away,home:g.home,team:pf.team,player:name,market:pf.market,line:mk.yes?null:line,overOdds:over,underOdds:mk.yes||isNaN(under)||!under?null:under});
+    const plus=!!pf.plus&&!mk.yes;
+    (S.props[gkey()]=S.props[gkey()]||[]).push({id:uid(),away:g.away,home:g.home,team:pf.team,player:name,market:pf.market,plus,line:mk.yes?null:line,overOdds:over,underOdds:mk.yes||plus||isNaN(under)||!under?null:under});
     commit();toast('Added '+name);
   },
+  delProps(d){const ids=new Set((d.ids||'').split(','));S.props[gkey()]=tgProps().filter(p=>!ids.has(p.id));S.ticket[gkey()]=tgTicket().filter(t=>!ids.has(t.pid));commit()},
   delProp(d){S.props[gkey()]=tgProps().filter(p=>p.id!==d.p);S.ticket[gkey()]=tgTicket().filter(t=>t.pid!==d.p);commit()},
   tkAdd(d){
-    const arr=tgTicket().slice(),i=arr.findIndex(t=>t.pid===d.p);
+    /* only one rung per player and market can be on the ticket */
+    const all=tgProps(),me=all.find(p=>p.id===d.p);
+    const arr=tgTicket().filter(t=>{if(t.pid===d.p)return true;const o=all.find(p=>p.id===t.pid);return !(o&&me&&o.player===me.player&&o.market===me.market)});
+    const i=arr.findIndex(t=>t.pid===d.p);
     if(i>=0&&arr[i].side===d.s)arr.splice(i,1);else if(i>=0)arr[i]={pid:d.p,side:d.s};else arr.push({pid:d.p,side:d.s});
     S.ticket[gkey()]=arr;commit();
   },
