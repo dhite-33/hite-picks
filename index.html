@@ -35,6 +35,11 @@ header,main{position:relative;z-index:1}
 .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px}
 .thumb{display:flex;flex-direction:column;gap:6px}
 .thumb img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:zoom-in}
+.propleg{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:10px;border:1px solid var(--line);border-radius:12px;margin:8px 0;background:var(--bg2)}
+.propleg.won{border-color:var(--green);background:#17401f}.propleg.lost{border-color:var(--red);background:#41131b}
+.prop{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}.prop:last-child{border:0}.prop>.grow{flex:1 1 100%}
+.pbtn{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-weight:700;font-size:14px;white-space:nowrap}
+.pbtn.on{background:var(--green);color:var(--bg);border-color:var(--green)}
 .flag12{flex:0 0 auto;height:36px;width:auto;border-radius:3px;box-shadow:0 2px 8px #0008;align-self:flex-start}
 .hawk{flex:0 0 auto;height:44px;width:auto;filter:drop-shadow(0 2px 6px #0007)}
 .knit{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.2;
@@ -162,6 +167,7 @@ body.shake main,body.shake header,body.shake nav{animation:shake .5s 2}
 <div id="toast"></div>
 <script src="seed.js"></script>
 <script src="logos.js"></script>
+<script src="rosters.js"></script>
 <script src="config.js"></script>
 <script>
 /* ============ constants ============ */
@@ -204,7 +210,7 @@ function seedState(){
     games:{'2026-27|w8':week8Games()}};
 }
 const GROUP_NAMES={grandpa:"Grandpa's group",uncle:"N'Namdi's group"};
-function fixNames(){(S.groups||[]).forEach(g=>{if(GROUP_NAMES[g.id])g.name=GROUP_NAMES[g.id]})}
+function fixNames(){(S.groups||[]).forEach(g=>{if(GROUP_NAMES[g.id])g.name=GROUP_NAMES[g.id]});S.props=S.props||{};S.ticket=S.ticket||{};S.tgStake=S.tgStake||{};S.src=S.src||{}}
 function load(){
   try{const t=localStorage.getItem(KEY);if(t){S=JSON.parse(t);fixNames();return}}catch(e){}
   S=window.LIVE_STATE?JSON.parse(JSON.stringify(window.LIVE_STATE)):seedState();fixNames();
@@ -294,10 +300,11 @@ function startSync(db){
   },()=>setSync('err'));
 }
 const PK_DEFAULT={group:'grandpa',stake:30,onlySafe:false,min3:90,max3:200,min4:90,max4:200,min5:90,max5:200};
+const PF_DEFAULT={game:'',team:'',player:'',market:'recyds'};
 const SP_DEFAULT={stake:30,onlySafe:false,min2:90,max2:200,min3:90,max3:200};
 function loadUI(){
-  UI={tab:'week',season:'2026-27',week:'w9',slipGroup:'grandpa',pk:{...PK_DEFAULT},sp:{...SP_DEFAULT}};
-  try{const t=localStorage.getItem(UIKEY);if(t)UI=Object.assign(UI,JSON.parse(t));UI.pk=Object.assign({},PK_DEFAULT,UI.pk);UI.sp=Object.assign({},SP_DEFAULT,UI.sp||{})}catch(e){}
+  UI={tab:'week',season:'2026-27',week:'w12',slipGroup:'grandpa',pk:{...PK_DEFAULT},sp:{...SP_DEFAULT},pf:{...PF_DEFAULT}};
+  try{const t=localStorage.getItem(UIKEY);if(t)UI=Object.assign(UI,JSON.parse(t));UI.pk=Object.assign({},PK_DEFAULT,UI.pk);UI.sp=Object.assign({},SP_DEFAULT,UI.sp||{});UI.pf=Object.assign({},PF_DEFAULT,UI.pf||{})}catch(e){}
 }
 function saveUI(){try{localStorage.setItem(UIKEY,JSON.stringify(UI))}catch(e){}}
 function commit(){save();render()}
@@ -327,11 +334,24 @@ const fmtLine=n=>n>0?'+'+n:''+n;
 const sideLine=(l,t)=>t===l.away?l.awayLine:-l.awayLine;
 const spA=g=>g.awaySpOdds||-110, spH=g=>g.homeSpOdds||-110;
 function legProb(l){
+  if(l.type==='prop')return l.p;
   const f=isSp(l)?fairP(l.awaySpOdds||-110,l.homeSpOdds||-110):fairP(l.awayML,l.homeML);
   return l.pick===l.away?f[0]:f[1];
 }
-function legDesc(l){return isSp(l)?`${tname(l.pick)} ${fmtLine(sideLine(l,l.pick))} (${fmtML(l.odds)})`:`${tname(l.pick)} ML ${fmtML(l.odds)}`}
-function parlayKind(p){return p.legs.every(isSp)?'spread':p.legs.some(isSp)?'mixed':'moneyline'}
+function legDesc(l){
+  if(isProp(l))return `${propText(l,l.side)} (${fmtML(l.odds)})`;
+  return isSp(l)?`${tname(l.pick)} ${fmtLine(sideLine(l,l.pick))} (${fmtML(l.odds)})`:`${tname(l.pick)} ML ${fmtML(l.odds)}`;
+}
+/* pieces for the casino slip: a title, a smaller line under it, and the price shown on the right */
+const legTitle=l=>isProp(l)?l.player.toUpperCase():tname(l.pick).toUpperCase();
+const legWhere=l=>isProp(l)?`${tname(l.team)} · ${tname(l.away)} at ${tname(l.home)}`:(l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home));
+const legSub=l=>isProp(l)?(l.side==='yes'?'Anytime TD':`${l.side==='over'?'Over':'Under'} ${l.line} ${(MK[l.market]||{l:l.market}).l}`)+' · '+legWhere(l):legWhere(l)+(isSp(l)?' · spread':'');
+const legPrice=l=>isProp(l)?fmtML(l.odds):isSp(l)?fmtLine(sideLine(l,l.pick))+' ('+fmtML(l.odds)+')':fmtML(l.odds);
+function parlayKind(p){
+  if(p.legs.every(isProp))return 'prop';
+  if(p.legs.every(isSp))return 'spread';
+  return p.legs.every(l=>!isSp(l)&&!isProp(l))?'moneyline':'mixed';
+}
 function pHit(p){return p.legs.reduce((a,l)=>a*legProb(l),1)}
 /* build the spread leg data for a pick on a game (g must have awayLine) */
 function mkSpreadLeg(g,t){
@@ -340,6 +360,28 @@ function mkSpreadLeg(g,t){
 }
 function mkMlLeg(g,t){
   return {id:uid(),away:g.away,home:g.home,awayML:g.awayML,homeML:g.homeML,pick:t,odds:t===g.away?g.awayML:g.homeML,winner:null};
+}
+/* ---- player props (Thanksgiving tab). A prop leg's pick is always 'hit'; you grade it Hit or Missed. ---- */
+const PROP_MARKETS=[{k:'atd',l:'Anytime TD',yes:true},{k:'recyds',l:'Receiving yds'},{k:'rec',l:'Receptions'},{k:'ryds',l:'Rushing yds'},{k:'rr',l:'Rush + Rec yds'},{k:'pyds',l:'Passing yds'},{k:'ptd',l:'Pass TDs'},{k:'cmp',l:'Completions'}];
+const MK=Object.fromEntries(PROP_MARKETS.map(m=>[m.k,m]));
+const isProp=l=>l.type==='prop';
+const legKind=l=>l.type||'ml';
+function sameBet(x,l){
+  if(legKind(x)!==legKind(l)||x.away!==l.away||x.home!==l.home)return false;
+  return !isProp(l)||(x.player===l.player&&x.market===l.market&&x.line===l.line&&x.side===l.side);
+}
+const propPrice=(pr,side)=>side==='under'?pr.underOdds:pr.overOdds;
+function propProb(pr,side){
+  if(side==='yes'||!pr.underOdds||!pr.overOdds)return imp(propPrice(pr,side));
+  const f=fairP(pr.overOdds,pr.underOdds);return side==='over'?f[0]:f[1];
+}
+function propText(pr,side){
+  const m=MK[pr.market]||{l:pr.market};
+  return side==='yes'?`${pr.player} Anytime TD`:`${pr.player} ${side==='over'?'Over':'Under'} ${pr.line} ${m.l}`;
+}
+function mkPropLeg(pr,side){
+  return {id:uid(),type:'prop',away:pr.away,home:pr.home,team:pr.team,player:pr.player,market:pr.market,side,line:pr.line,
+    odds:propPrice(pr,side),p:propProb(pr,side),pick:'hit',winner:null};
 }
 function pNet(p){
   const st=pStatus(p),T=stakeTotal(p),pay=pPayout(p),out={};
@@ -408,6 +450,13 @@ function groupChips(cur,action){return `<div class="row" style="margin:6px 0">${
 
 /* ============ views ============ */
 function legRow(p,l){
+  if(isProp(l)){
+    const st=legStatus(l),btn=(t,txt,cl)=>`<button class="btn sm ${l.winner===t?cl:''}" data-a="win" data-p="${p.id}" data-l="${l.id}" data-t="${t}">${txt}</button>`;
+    return `<div class="propleg ${st}"><div class="grow"><b>${esc(l.player)}</b> <span class="status ${st}" style="margin-left:4px">${st==='pending'?'open':st==='won'?'hit':'missed'}</span>
+      <div>${l.side==='yes'?'Anytime TD':`${l.side==='over'?'Over':'Under'} ${l.line} ${(MK[l.market]||{l:l.market}).l}`} <span class="mute">(${fmtML(l.odds)})</span></div>
+      <div class="small mute">${esc(legWhere(l))}</div></div>
+      <div class="row" style="gap:6px;flex-wrap:nowrap">${btn('hit','Hit','primary')}${btn('miss','Missed','danger')}<button class="btn sm" data-a="rmLeg" data-p="${p.id}" data-l="${l.id}" title="Remove leg">✕</button></div></div>`;
+  }
   const sp=isSp(l);
   const side=t=>{
     const isPick=l.pick===t;
@@ -433,7 +482,7 @@ function parlayCard(p,i,g){
     if(p.manual)body+=` <button class="btn sm" data-a="setManual" data-p="${p.id}" data-v="">Clear manual result</button>`;
   }
   const odds=p.legs.length?`<div>Odds<b>${fmtML(toAm(pDec(p)))}</b></div><div>Hit chance<b>${(pHit(p)*100).toFixed(1)}%</b></div>`:'';
-  return `<div class="card" style="background:var(--bg2)"><div class="row"><h2 class="grow" style="margin:0">Parlay ${i+1}</h2>${statusChip(st)}</div>${body}
+  return `<div class="card" style="background:var(--bg2)"><div class="row"><h2 class="grow" style="margin:0">Parlay ${i+1}${p.tg?` <span class="status pending" style="margin-left:6px;vertical-align:middle">Thanksgiving</span>`:``}</h2>${statusChip(st)}</div>${body}
   <h3>Who's in</h3><div class="stakes">${stakes}</div>
   <div class="kv"><div>Stake<b>${money(T)}</b></div>${odds}<div>${st==='won'?'Paid':'To collect'}<b>${pay?money(pay):'—'}</b></div></div>
   <div class="row small mute"><label class="field">Actual payout (optional)<input type="number" inputmode="decimal" step="0.01" placeholder="${p.legs.length?r2(T*pDec(p)):''}" value="${p.payoutOverride!=null?p.payoutOverride:''}" data-c="payout" data-p="${p.id}"></label>
@@ -441,7 +490,7 @@ function parlayCard(p,i,g){
 }
 function overlapBanner(){
   const picks={};
-  S.groups.forEach(g=>parlaysAt(g.id).forEach(p=>p.legs.forEach(l=>{(picks[gameKey(l)]=picks[gameKey(l)]||{})[g.id]=(picks[gameKey(l)][g.id]||[]).concat(l.pick)})));
+  S.groups.forEach(g=>parlaysAt(g.id).forEach(p=>p.legs.filter(l=>!isProp(l)).forEach(l=>{(picks[gameKey(l)]=picks[gameKey(l)]||{})[g.id]=(picks[gameKey(l)][g.id]||[]).concat(l.pick)})));
   const msgs=[];
   for(const [k,v] of Object.entries(picks)){const ids=Object.keys(v);if(ids.length>1){
     const [a,h]=k.split('-');const same=v[ids[0]].some(t=>v[ids[1]].includes(t));
@@ -489,7 +538,7 @@ function gameCard(g,edit){
   const f=fairP(g.awayML,g.homeML),fs=favSide(g);
   const side=(t,ml,p,key)=>`<div style="text-align:center;flex:1">${logo(t)}<div><b>${tname(t)}</b></div>
    ${edit?`<input type="number" step="1" value="${ml}" data-c="ml" data-g="${g.id}" data-side="${key}" style="width:80px;text-align:center">`:`<div class="mute">${fmtML(ml)}</div>`}<div class="small ${fs===key?'pos':'mute'}">${(p*100).toFixed(0)}%</div></div>`;
-  return `<div class="card"><div class="row" style="align-items:flex-start;gap:4px">${side(g.away,g.awayML,f[0],'away')}<div class="mute" style="align-self:center">at</div>${side(g.home,g.homeML,f[1],'home')}</div>
+  return `<div class="card">${g.when?`<div class="small mute" style="text-align:center;margin-bottom:6px">${esc(g.when)}</div>`:''}<div class="row" style="align-items:flex-start;gap:4px">${side(g.away,g.awayML,f[0],'away')}<div class="mute" style="align-self:center">at</div>${side(g.home,g.homeML,f[1],'home')}</div>
    ${edit?`<div class="row small mute" style="margin-top:8px;gap:6px"><label class="field">${tname(g.away)} spread<input type="number" step="0.5" value="${g.awayLine!=null?g.awayLine:''}" placeholder="-3.5" data-c="sp" data-f="line" data-g="${g.id}" style="width:78px"></label>
    <label class="field">${tname(g.away)} price<input type="number" step="1" value="${spA(g)}" data-c="sp" data-f="ao" data-g="${g.id}" style="width:78px"></label>
    <label class="field">${tname(g.home)} price<input type="number" step="1" value="${spH(g)}" data-c="sp" data-f="ho" data-g="${g.id}" style="width:78px"></label></div>
@@ -498,7 +547,7 @@ function gameCard(g,edit){
 function viewSlate(){
   const gs=gamesFor().slice().sort((a,b)=>Math.max(...fairP(b.awayML,b.homeML))-Math.max(...fairP(a.awayML,a.homeML)));
   const opts=Object.keys(TEAMS).sort((a,b)=>tname(a).localeCompare(tname(b))).map(t=>`<option value="${t}">${tname(t)}</option>`).join('');
-  return weekBar()+`<div class="note small">Moneylines are consensus numbers (blend of sportsbooks). Edit any number to update; win % removes the book's margin. Safest game first.</div>
+  return weekBar()+`<div class="note small">Lines for this week: ${esc(S.src[gkey()]||'a sportsbook feed')}. Edit any number to match your sportsbook; win % removes the book's margin. Safest game first.</div>
   <div class="grid2">${gs.map(g=>gameCard(g,true)).join('')||'<div class="card empty">No games for this week yet. Add them below.</div>'}</div>
   <div class="card"><h2>Add a game</h2><div class="grid2">
    <label class="field">Away team<select id="ngA">${opts}</select></label><label class="field">Home team<select id="ngH">${opts}</select></label>
@@ -523,7 +572,7 @@ function buildOptions(items,L,stake,min,max){
 }
 function otherGroupGames(){
   const used=new Set();
-  S.groups.filter(x=>x.id!==UI.pk.group).forEach(o=>parlaysAt(o.id).forEach(p=>p.legs.forEach(l=>used.add(gameKey(l)))));
+  S.groups.filter(x=>x.id!==UI.pk.group).forEach(o=>parlaysAt(o.id).forEach(p=>p.legs.filter(l=>!isProp(l)).forEach(l=>used.add(gameKey(l)))));
   return used;
 }
 function optCard(c,label,g,stake){
@@ -606,21 +655,75 @@ function viewSpreads(){
    <div class="card"><h2>Spread board</h2><div class="small mute" style="margin-bottom:6px">The percent is each team's chance to win the game outright, used to rank how safe a side looks. Covering a spread is close to a coin flip for every game.</div>${heat||'<div class="empty">No spread lines for this week yet. Add them on the Schedule tab.</div>'}</div>
    ${secs}${realityCheck(+k.stake)}`;
 }
+/* ---- Thanksgiving player props: one shared ticket for Dylan and Brian, kept in Grandpa's group with Grandpa's stake at $0 ---- */
+const tgProps=()=>S.props[gkey()]||[];
+const tgTicket=()=>S.ticket[gkey()]||[];
+const tgStake=()=>Object.assign({brian:10,dylan:10},S.tgStake[gkey()]||{});
+function tgGames(){const gs=gamesFor();const t=gs.filter(g=>g.tg);return t.length?t:gs}
+function rosterOpts(team,sel){
+  const r=(window.ROSTERS&&ROSTERS[team])||[];
+  return `<option value="">Pick a player…</option>`+r.map(p=>`<option value="${esc(p[0])}" ${p[0]===sel?'selected':''}>${esc(p[0])} · ${p[1]}${p[2]?' ('+esc(p[2])+')':''}</option>`).join('');
+}
+function viewTg(){
+  const gs=tgGames(),props=tgProps(),tk=tgTicket(),st=tgStake(),pf=UI.pf;
+  const g0=gs.find(g=>gameKey(g)===pf.game)||gs[0];
+  if(g0){
+    if(pf.game!==gameKey(g0)){pf.game=gameKey(g0);pf.team='';pf.player=''}
+    if(pf.team!==g0.away&&pf.team!==g0.home){pf.team=g0.away;pf.player=''}
+  }
+  const mk=MK[pf.market]||PROP_MARKETS[0];
+  const legs=tk.map(t=>{const pr=props.find(x=>x.id===t.pid);return pr?{pr,side:t.side}:null}).filter(Boolean);
+  const stakeTot=(+st.brian||0)+(+st.dylan||0);
+  const dm=legs.reduce((a,x)=>a*dec(propPrice(x.pr,x.side)),1);
+  const hit=legs.reduce((a,x)=>a*propProb(x.pr,x.side),1);
+  const ticket=`<div class="card"><h2>Our ticket</h2>
+   <div class="small mute">One shared parlay for you and your dad. It goes in Grandpa's group, and Grandpa's balance doesn't change.</div>
+   ${legs.length?legs.map(x=>`<div class="legline" style="justify-content:space-between;margin:8px 0"><span><b>${esc(x.pr.player)}</b><br><span class="mute small">${x.side==='yes'?'Anytime TD':`${x.side==='over'?'Over':'Under'} ${x.pr.line} ${(MK[x.pr.market]||{l:x.pr.market}).l}`} · ${tname(x.pr.team)}</span></span>
+     <span style="white-space:nowrap">${fmtML(propPrice(x.pr,x.side))} <button class="btn sm" data-a="tkRm" data-p="${x.pr.id}">✕</button></span></div>`).join(''):`<div class="empty">Tap Over, Under or Yes on a prop below to add it.</div>`}
+   <div class="stakes"><label class="stake">Brian $<input type="number" inputmode="decimal" min="0" step="0.5" value="${st.brian}" data-c="tgstake" data-m="brian"></label>
+   <label class="stake">Dylan $<input type="number" inputmode="decimal" min="0" step="0.5" value="${st.dylan}" data-c="tgstake" data-m="dylan"></label></div>
+   ${legs.length?`<div class="kv"><div>${legs.length} legs<b>${fmtML(toAm(dm))}</b></div><div>Stake<b>${money(stakeTot)}</b></div><div>Hit chance<b>${(hit*100).toFixed(1)}%</b></div><div>To collect<b>${money(stakeTot*dm)}</b></div></div>
+   <div class="small mute">Casinos can refuse some combinations from the same game or player, so check the ticket at the window. If the slip pays differently, upload it on the Bet slip tab and send it to Claude.</div>
+   <div class="row" style="margin-top:8px"><button class="btn primary" data-a="tkLock">Lock ticket</button><button class="btn" data-a="tkClear">Clear</button></div>`:''}</div>`;
+  const board=gs.map(g=>{
+    const list=props.filter(pr=>pr.away===g.away&&pr.home===g.home).sort((a,b)=>(a.team===b.team?0:a.team===g.away?-1:1)||a.player.localeCompare(b.player)||a.market.localeCompare(b.market)||(a.line||0)-(b.line||0));
+    const rows=list.map(pr=>{
+      const sel=tk.find(t=>t.pid===pr.id);
+      const b=(side,txt)=>`<button class="pbtn ${sel&&sel.side===side?'on':''}" data-a="tkAdd" data-p="${pr.id}" data-s="${side}">${txt} ${fmtML(propPrice(pr,side))}</button>`;
+      return `<div class="prop"><div class="grow"><b>${esc(pr.player)}</b> <span class="mute small">${tname(pr.team)}</span><div>${pr.market==='atd'?'Anytime TD':`${pr.line} ${(MK[pr.market]||{l:pr.market}).l}`}</div></div>
+       <div class="row" style="gap:6px;flex-wrap:nowrap">${pr.market==='atd'?b('yes','Yes'):b('over','Over')+(pr.underOdds?b('under','Under'):'')}<button class="btn sm" data-a="delProp" data-p="${pr.id}" title="Remove prop">✕</button></div></div>`}).join('');
+    return `<div class="card"><h2>${tname(g.away)} at ${tname(g.home)}</h2><div class="small mute" style="margin-bottom:4px">${esc(g.when||'')}${g.awayLine!=null?` · ${tname(g.away)} ${fmtLine(g.awayLine)}`:''}</div>
+     ${rows||`<div class="empty">No props entered for this game yet.</div>`}</div>`}).join('');
+  const gOpts=gs.map(g=>`<option value="${gameKey(g)}" ${g0&&gameKey(g)===gameKey(g0)?'selected':''}>${tname(g.away)} at ${tname(g.home)}</option>`).join('');
+  const form=g0?`<div class="card"><h2>Add a prop from the Caesars board</h2>
+   <div class="small mute" style="margin-bottom:8px">Type what the Caesars board shows at the casino. Add as many lines per player as you like. The form keeps your player selected so the next line is quick.</div>
+   <div class="grid2">
+    <label class="field">Game<select data-u="pf.game">${gOpts}</select></label>
+    <label class="field">Team<select data-u="pf.team"><option value="${g0.away}" ${pf.team===g0.away?'selected':''}>${tname(g0.away)}</option><option value="${g0.home}" ${pf.team===g0.home?'selected':''}>${tname(g0.home)}</option></select></label>
+    <label class="field">Player<select data-u="pf.player">${rosterOpts(pf.team,pf.player)}</select></label>
+    <label class="field">Or type a name<input type="text" id="pfName" placeholder="Player not listed" autocomplete="off"></label>
+    <label class="field">Prop<select data-u="pf.market">${PROP_MARKETS.map(m=>`<option value="${m.k}" ${m.k===pf.market?'selected':''}>${m.l}</option>`).join('')}</select></label>
+    ${mk.yes?'':`<label class="field">Line<input type="number" step="0.5" id="pfLine" placeholder="62.5"></label>`}
+    <label class="field">${mk.yes?'Yes price':'Over price'}<input type="number" step="1" id="pfOver" placeholder="${mk.yes?'+120':'-115'}"></label>
+    ${mk.yes?'':`<label class="field">Under price<input type="number" step="1" id="pfUnder" placeholder="-115"></label>`}
+   </div><div class="row" style="margin-top:10px"><button class="btn primary" data-a="addProp">Add prop</button></div></div>`:`<div class="card empty">No games loaded for this week yet.</div>`;
+  return weekBar()+`<div class="note small">Thanksgiving picks for you and your dad. Lines come from the Caesars board at Muckleshoot, so you enter them here, then tap to build the ticket. Anyone with the page open sees the same ticket.</div>${ticket}${board}${form}`;
+}
 function slipText(g,ps){
-  return `${g.name} · ${WK[UI.week].l} ${UI.season}\n`+ps.map((p,i)=>`\nParlay ${i+1}\n`+p.legs.map(l=>`  ${legDesc(l)} (${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)})`).join('\n')+`\n  Wager ${money(stakeTotal(p))} · ${fmtML(toAm(pDec(p)))} · To collect ${money(pPayout(p))}`).join('\n');
+  return `${g.name} · ${WK[UI.week].l} ${UI.season}\n`+ps.map((p,i)=>`\nParlay ${i+1}\n`+p.legs.map(l=>`  ${legDesc(l)} (${legWhere(l)})`).join('\n')+`\n  Wager ${money(stakeTotal(p))} · ${fmtML(toAm(pDec(p)))} · To collect ${money(pPayout(p))}`).join('\n');
 }
 function viewSlip(){
   const g=grp(UI.slipGroup),ps=parlaysAt(g.id).filter(p=>p.legs.length);
-  const slips=ps.map((p,i)=>`<div class="slip"><h2>${esc(g.name)} · Parlay ${i+1}</h2><div class="small" style="color:#555;margin:-4px 0 6px">${WK[UI.week].l} · ${UI.season} · ${p.legs.length}-team ${parlayKind(p)} parlay</div>
-   ${p.legs.map(l=>`<div class="sl"><span>${tname(l.pick).toUpperCase()}<small>${l.pick===l.home?'vs '+tname(l.away):'at '+tname(l.home)}${isSp(l)?' · spread':''}</small></span><span>${isSp(l)?fmtLine(sideLine(l,l.pick))+' ('+fmtML(l.odds)+')':fmtML(l.odds)}</span></div>`).join('')}
+  const slips=ps.map((p,i)=>`<div class="slip"><h2>${esc(g.name)} · Parlay ${i+1}</h2><div class="small" style="color:#555;margin:-4px 0 6px">${WK[UI.week].l} · ${UI.season} · ${p.legs.length}-leg ${parlayKind(p)} parlay</div>
+   ${p.legs.map(l=>`<div class="sl"><span>${esc(legTitle(l))}<small>${esc(legSub(l))}</small></span><span>${legPrice(l)}</span></div>`).join('')}
    <div class="tot"><span>Wager</span><span>${money(stakeTotal(p))}</span></div><div class="tot"><span>Parlay odds</span><span>${fmtML(toAm(pDec(p)))}</span></div>
    <div class="tot big"><span>To collect</span><span>${money(pPayout(p))}</span></div>
    <div class="small" style="color:#555;margin-top:8px">In: ${g.members.filter(m=>+p.stakes[m]>0).map(m=>who(m)+' '+money(+p.stakes[m])).join(' · ')}</div></div>`).join('');
   return weekBar()+groupChips(UI.slipGroup,'slipGroup')+`<div class="card">${slipPhotos(g.id)}</div>`+(slips||`<div class="card empty">No picks locked in for this group yet.<br><br><button class="btn primary" data-a="tab" data-t="picks" data-g="${g.id}">Go to the pick helper</button></div>`)+
    (ps.length?`<div class="row"><button class="btn primary" data-a="copySlip">Copy as text</button></div>`:'');
 }
-const VIEWS={week:viewWeek,'h-grandpa':()=>viewHistory('grandpa'),'h-uncle':()=>viewHistory('uncle'),slate:viewSlate,picks:viewPicks,spreads:viewSpreads,slip:viewSlip};
-const TABS=[['week','Week'],['h-grandpa',"Grandpa's group"],['h-uncle',"N'Namdi's group"],['slate','Schedule'],['picks','Pick helper'],['spreads','Spreads'],['slip','Bet slip']];
+const VIEWS={week:viewWeek,'h-grandpa':()=>viewHistory('grandpa'),'h-uncle':()=>viewHistory('uncle'),slate:viewSlate,picks:viewPicks,spreads:viewSpreads,tg:viewTg,slip:viewSlip};
+const TABS=[['week','Week'],['h-grandpa',"Grandpa's group"],['h-uncle',"N'Namdi's group"],['slate','Schedule'],['picks','Pick helper'],['spreads','Spreads'],['tg','Thanksgiving'],['slip','Bet slip']];
 function render(){
   $('#tabs').innerHTML=TABS.map(([k,l])=>`<button class="tab ${UI.tab===k?'on':''}" data-a="tab" data-t="${k}">${l}</button>`).join('');
   watchSlips();
@@ -689,7 +792,7 @@ const A={
     const p=findP(d.p),l=p.legs.find(x=>x.id===d.l),val=l.winner===d.t?null:d.t;
     const before=new Map(S.parlays.map(q=>[q.id,pStatus(q)]));
     /* the same game in another parlay is settled together, but a spread leg and a moneyline leg are different bets */
-    S.parlays.forEach(q=>{if(q.season===p.season&&q.week===p.week)q.legs.forEach(x=>{if(x.away===l.away&&x.home===l.home&&isSp(x)===isSp(l))x.winner=val})});
+    S.parlays.forEach(q=>{if(q.season===p.season&&q.week===p.week)q.legs.forEach(x=>{if(sameBet(x,l))x.winner=val})});
     const changed=S.parlays.filter(q=>before.get(q.id)!==pStatus(q)&&pStatus(q)!=='pending');
     commit();
     const first=changed.find(q=>q.id===p.id)||changed[0];
@@ -701,6 +804,32 @@ const A={
     (S.games[gkey()]=S.games[gkey()]||[]).push({id:uid(),away:a,home:h,awayML:am,homeML:hm,flag:null});commit();
   },
   delGame(d){S.games[gkey()]=gamesFor().filter(g=>g.id!==d.g);commit()},
+  addProp(){
+    const pf=UI.pf,g=tgGames().find(x=>gameKey(x)===pf.game),mk=MK[pf.market];
+    const name=($('#pfName')&&$('#pfName').value.trim())||pf.player;
+    const line=$('#pfLine')?parseFloat($('#pfLine').value):null,over=parseInt($('#pfOver').value),under=$('#pfUnder')?parseInt($('#pfUnder').value):NaN;
+    if(!g||!mk)return toast('Pick a game and a prop first');
+    if(!name)return toast('Pick a player or type a name');
+    if(!mk.yes&&isNaN(line))return toast('Enter the line, like 62.5');
+    if(isNaN(over)||!over)return toast(mk.yes?'Enter the Yes price':'Enter the Over price');
+    (S.props[gkey()]=S.props[gkey()]||[]).push({id:uid(),away:g.away,home:g.home,team:pf.team,player:name,market:pf.market,line:mk.yes?null:line,overOdds:over,underOdds:mk.yes||isNaN(under)||!under?null:under});
+    commit();toast('Added '+name);
+  },
+  delProp(d){S.props[gkey()]=tgProps().filter(p=>p.id!==d.p);S.ticket[gkey()]=tgTicket().filter(t=>t.pid!==d.p);commit()},
+  tkAdd(d){
+    const arr=tgTicket().slice(),i=arr.findIndex(t=>t.pid===d.p);
+    if(i>=0&&arr[i].side===d.s)arr.splice(i,1);else if(i>=0)arr[i]={pid:d.p,side:d.s};else arr.push({pid:d.p,side:d.s});
+    S.ticket[gkey()]=arr;commit();
+  },
+  tkRm(d){S.ticket[gkey()]=tgTicket().filter(t=>t.pid!==d.p);commit()},
+  tkClear(){S.ticket[gkey()]=[];commit()},
+  tkLock(){
+    const props=tgProps(),legs=tgTicket().map(t=>{const pr=props.find(x=>x.id===t.pid);return pr?mkPropLeg(pr,t.side):null}).filter(Boolean);
+    const st=tgStake();if(!legs.length)return toast('Add at least one prop first');
+    if((+st.brian||0)+(+st.dylan||0)<=0)return toast('Enter a stake for you or your dad');
+    S.parlays.push({id:uid(),season:UI.season,week:UI.week,group:'grandpa',tg:true,stakes:{brian:+st.brian||0,dylan:+st.dylan||0,grandpa:0},legs,manual:null,payoutOverride:null});
+    S.ticket[gkey()]=[];UI.tab='week';saveUI();commit();window.scrollTo(0,0);toast('Ticket locked in Grandpa\'s group. Grandpa is in for $0.');
+  },
   lockCombo(d){
     const c=COMBOS[+d.i],g=grp(UI.pk.group);if(!c)return;
     const each=r2((c.stakeUsed||UI.pk.stake)/g.members.length),stakes={};g.members.forEach(m=>stakes[m]=each);
@@ -719,7 +848,7 @@ const A={
     }catch(e){if(e&&e.code==='declined')return}
     const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=name;a.click();
   },
-  resetData(){askConfirm('Reset everything back to the imported spreadsheet data? All edits will be lost for everyone.',()=>{S=seedState();commit();closeModal();toast('Reset to spreadsheet data')})},
+  resetData(){askConfirm('Reset everything back to the imported spreadsheet data? All edits will be lost for everyone.',()=>{S=seedState();fixNames();commit();closeModal();toast('Reset to spreadsheet data')})},
   lock(){try{localStorage.removeItem(AUTHKEY)}catch(e){}closeModal();toast('Locked. Passcode needed for the next edit.')},
 };
 function copy(t){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Copied'),()=>{
@@ -729,7 +858,7 @@ function openAddLeg(d){
   const p=findP(d.p);if(!p)return;const m=d.m==='sp'?'sp':'ml';
   const inP=new Set(p.legs.map(gameKey));
   const gs=gamesFor(p.season,p.week).filter(g=>m==='ml'||g.awayLine!=null);
-  const other=S.groups.filter(g=>g.id!==p.group);const used=new Set();other.forEach(o=>parlaysAt(o.id,p.season,p.week).forEach(q=>q.legs.forEach(l=>used.add(gameKey(l)))));
+  const other=S.groups.filter(g=>g.id!==p.group);const used=new Set();other.forEach(o=>parlaysAt(o.id,p.season,p.week).forEach(q=>q.legs.filter(l=>!isProp(l)).forEach(l=>used.add(gameKey(l)))));
   const list=gs.slice().sort((a,b)=>Math.max(...fairP(b.awayML,b.homeML))-Math.max(...fairP(a.awayML,a.homeML)));
   const tab=(k,t)=>`<button class="chip ${m===k?'on':''}" data-a="openAddLeg" data-p="${p.id}" data-m="${k}">${t}</button>`;
   showModal(`<h2>Add a leg</h2><div class="row" style="margin-bottom:6px">${tab('ml','Moneyline')}${tab('sp','Spread')}</div>
@@ -750,11 +879,11 @@ function settings(){
   <h3>Spreadsheet check (after 2026-27 Week 7)</h3><div class="scroll"><table><tr><th>Who</th><th>Sheet</th><th>Page</th><th></th></tr>${rows.join('')}</table></div>
   <h3>More</h3><div class="row"><button class="btn" data-a="lock">Lock editing</button><button class="btn danger" data-a="resetData">Reset to spreadsheet data</button></div>
   <button class="btn" style="width:100%;margin-top:14px" data-a="close">Close</button>`);
-  $('#imp').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>guard(()=>{try{const o=JSON.parse(r.result);if(!o.parlays||!o.groups)throw 0;S=o;commit();closeModal();toast('Backup imported')}catch(x){toast('That file is not a valid backup')}});r.readAsText(f)};
+  $('#imp').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>guard(()=>{try{const o=JSON.parse(r.result);if(!o.parlays||!o.groups)throw 0;S=o;fixNames();commit();closeModal();toast('Backup imported')}catch(x){toast('That file is not a valid backup')}});r.readAsText(f)};
 }
 
 /* ============ events ============ */
-function setPath(path,v){const [a,b]=path.split('.');if(b){UI[a][b]=v}else UI[a]=v;saveUI()}
+function setPath(path,v){const [a,b]=path.split('.');if(b){UI[a][b]=v}else UI[a]=v;if(path==='pf.game'){UI.pf.team='';UI.pf.player=''}if(path==='pf.team')UI.pf.player='';saveUI()}
 document.addEventListener('click',e=>{
   if(e.target.id==='modal'){closeModal();return}
   const el=e.target.closest('[data-a]');if(!el||el.disabled)return;
@@ -776,6 +905,7 @@ document.addEventListener('change',e=>{
       else if(c==='payout'){const p=findP(d.p);p.payoutOverride=d.value===''?null:+d.value;commit()}
       else if(c==='ml'){const g=gamesFor().find(x=>x.id===d.g);const v=parseInt(d.value);if(!isNaN(v)&&v){g[d.side==='away'?'awayML':'homeML']=v}commit()}
       else if(c==='sp'){const g=gamesFor().find(x=>x.id===d.g);const v=parseFloat(d.value);if(d.f==='line'){if(isNaN(v))delete g.awayLine;else g.awayLine=v}else if(!isNaN(v)&&v){g[d.f==='ao'?'awaySpOdds':'homeSpOdds']=v}commit()}
+      else if(c==='tgstake'){(S.tgStake[gkey()]=S.tgStake[gkey()]||{})[d.m]=Math.max(0,+d.value||0);commit()}
       else if(c==='slipFile'){const f=el.files&&el.files[0];if(f)uploadSlip(f,d.g).catch(()=>toast('Could not upload that photo'));el.value=''}
       else if(c==='flag'){const g=gamesFor().find(x=>x.id===d.g);const key=d.k||'flag';g[key]=g[key]===d.f?null:d.f;commit()}
     };
